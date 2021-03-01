@@ -19,7 +19,6 @@ import json
 # Define Regex paterns to extract query-fields
 # pattern to extract the boundary fields from a boundary dimension 
 boundarydim_regex = re.compile(r"boundary\.([\w.-]*)\.(\w*)")
-subscriber_regex = re.compile(r"Subscriber Bound")
 
 def view_uuid(query, dashboards):
     viewCandidate = {"name": "No Match", "uuid": "-99", "precision": 99000, "dimensions_and_boundaries": ''}
@@ -52,7 +51,6 @@ def getDashboardQueries():
     all_queries_info = list()
     all_queries_dashboards = list() 
     for dashboard in dashboardInfo:
-        if subscriber_regex.search(str(dashboard['name'])):
         for query in dashboard['queries']:
             query_info = dict()
             query_info['context'] = query['context']
@@ -109,7 +107,6 @@ def main():
     for i in range(len(dashboardQueries['dashboards'])):
         query = dashboardQueries['info'][i] 
         dashboards = dashboardQueries['dashboards'][i]
-        if subscriber_regex.search(str(dashboards)):
         if query['context'] in ['traffic','backbone','big_cube']:
             view_uuid(query, dashboards)
 
