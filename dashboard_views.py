@@ -102,7 +102,7 @@ def main():
     global dashboardQueries
     dashboardQueries = getDashboardQueries()
 
-    print('dashboard_list;query_dimensions_and_boundaries;best_matching_view_dimensions_and_boundaries;best_matching_view_name;best_matching_view_uuid')
+    print('dashboard_list;context;query_dimensions_and_boundaries;best_matching_view_dimensions_and_boundaries;best_matching_view_name;best_matching_view_uuid')
 
     for i in range(len(dashboardQueries['dashboards'])):
         query = dashboardQueries['info'][i] 
