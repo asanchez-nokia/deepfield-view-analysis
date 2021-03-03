@@ -4,6 +4,7 @@ from requests.packages.urllib3.exceptions import InsecureRequestWarning
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 import json
 import sys
+import deepy.deepui
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--action",
@@ -14,12 +15,14 @@ parser.add_argument("--view",
                             help="view name")
 parser.add_argument("--dimension",
                             help="dimension name")
+parser.add_argument("--timesteps",
+                            help="align to default timesteps")
 
 args = parser.parse_args()
 
 action = args.action
-if action not in ["add", "remove", "show"]:
-    print ("--action can take values add, remove, or show")
+if action not in ["add", "remove", "show", "timesteps"]:
+    print ("--action can take values add, remove, show, or timesteps")
     sys.exit(1)
 
 context = args.context
@@ -33,13 +36,13 @@ if view is None:
     sys.exit(1)
 
 dimension = args.dimension
-if dimension is None and action != "show":
+if dimension is None and action not in [ "show", "timesteps" ]:
     print(action)
     print ("--dimension is mandatory")
     sys.exit(1)
 
 base_url = 'https://localhost/api/data_views/'
-key = 'api_key=1ruBGjlbKOYTW8'
+key = 'api_key=' + deepy.deepui.get_root_api_keys()[0]
 
 def get():
     o = requests.get(base_url + '?' + key, verify=False)
@@ -56,7 +59,7 @@ def get_view(data):
 def process_view(view, action, dimension):
     view = view.copy()
     splitDim = dimension.split('.')
-    if len(splitDim) == 1:
+    if len(splitDim) in [ 1, 3 ]:
         prettyDim = {'base':dimension}
     elif len(splitDim) == 2:
         prettyDim = {'base':splitDim[0],'split':splitDim[1]}
@@ -73,22 +76,28 @@ def process_view(view, action, dimension):
 def put_view(view):
     view = view.copy()
     uuid = view['uuid']
-
-    retention = {}
-    for step, value in view['timesteps'].items():
-        retention[step] = value['data_age_days']
-    view['timestep_retention_days'] = retention
-    del view['timesteps']
-
-    if action == 'add':
-        view['comment'] = 'Adding dimension ' + dimension + ' to view ' + view['name']
-    if action == 'remove':
-        view['comment'] = 'Removing dimension ' + dimension + ' from view ' + view['name']
-
     content_type = "Content-Type: application/json"
     url = base_url + uuid + '?' + key
 
-    return requests.put(url, headers={'content_type':content_type}, data=json.dumps(view), verify=False)
+    if action != 'timesteps':
+        retention = {}
+        for step, value in view['timesteps'].items():
+            retention[step] = value['data_age_days']
+        view['timestep_retention_days'] = retention
+        del view['timesteps']
+
+        if action == 'add':
+            view['comment'] = 'Adding dimension ' + dimension + ' to view ' + view['name']
+        if action == 'remove':
+            view['comment'] = 'Removing dimension ' + dimension + ' from view ' + view['name']
+        return requests.put(url, headers={'content_type':content_type}, data=json.dumps(view), verify=False)
+
+    else:
+        view['timestep_retention_days'] = {'5min':3,'30min':8,'2hour':32}
+        del view['timesteps']
+        view['comment'] = 'Adjusting retention to align to automatic timesteps'
+        return requests.patch(url, headers={'content_type':content_type}, data=json.dumps(view), verify=False)
+
 
 data = get()
 view = get_view(data)
