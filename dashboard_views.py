@@ -43,7 +43,7 @@ def view_uuid(query, dashboards):
     query['dimensions_and_boundaries'] = sorted(tuple(queriesDimensionsSet | queriesBoundariesSet))
     query['view_uuid'] = viewCandidate['uuid']
     query['view_name'] = viewCandidate['name']
-    print(str(dashboards) + ';' + str(query['dimensions_and_boundaries']) + ';' + str(viewCandidate['dimensions_and_boundaries']) + ';' + query['view_name'] + ';' + query['view_uuid'])
+    print(str(dashboards) + ';' + query['context'] + ';' + str(query['dimensions_and_boundaries']) + ';' + str(viewCandidate['dimensions_and_boundaries']) + ';' + query['view_name'] + ';' + query['view_uuid'])
 
 
 def getDashboardQueries():
