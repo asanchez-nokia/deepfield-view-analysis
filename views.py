@@ -8,15 +8,13 @@ import deepy.deepui
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--action",
-                            help="add, remove, or show")
+                            help="add, remove, show, or timesteps")
 parser.add_argument("--context",
                             help="context name")
 parser.add_argument("--view",
                             help="view name")
 parser.add_argument("--dimension",
                             help="dimension name")
-parser.add_argument("--timesteps",
-                            help="align to default timesteps")
 
 args = parser.parse_args()
 
