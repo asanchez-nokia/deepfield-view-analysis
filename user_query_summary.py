@@ -282,10 +282,10 @@ def view_uuid(row):
     viewCandidate = {"name": "No Match", "uuid": "-99", "precision": 99000}
 
     for aView in allContextViewInfo[row['context']]:
-        viewDimensionsSet = set(allContextViewInfo[row['context']][aView].get("dimensions", []))
-        queriesDimensionsSet = set(row['dimensions'])
-        viewBoundariesSet = set(allContextViewInfo[row['context']][aView].get("boundaries", []))
-        queriesBoundariesSet = set(row['boundaries'])
+        viewDimensionsSet = set(map(lambda x:x.lower(), allContextViewInfo[row['context']][aView].get("dimensions", [])))
+        queriesDimensionsSet = set(map(lambda x:x.lower(), row['dimensions']))
+        viewBoundariesSet = set(map(lambda x:x.lower(), allContextViewInfo[row['context']][aView].get("boundaries", [])))
+        queriesBoundariesSet = set(map(lambda x:x.lower(), row['boundaries']))
         viewType = allContextViewInfo[row['context']][aView].get("type")
         if (viewDimensionsSet|viewBoundariesSet).issuperset(queriesDimensionsSet) and viewBoundariesSet.issuperset(queriesBoundariesSet):
             if viewType == 'explicit_boundary':
