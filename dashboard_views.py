@@ -23,10 +23,10 @@ boundarydim_regex = re.compile(r"boundary\.([\w.-]*)\.(\w*)")
 def view_uuid(query, dashboards):
     viewCandidate = {"name": "No Match", "uuid": "-99", "precision": 99000, "dimensions_and_boundaries": ''}
     for aView in allContextViewInfo[query['context']]:
-        viewDimensionsSet = set(allContextViewInfo[query['context']][aView].get("dimensions", []))
-        queriesDimensionsSet = set(query['dimensions'])
-        viewBoundariesSet = set(allContextViewInfo[query['context']][aView].get("boundaries", []))
-        queriesBoundariesSet = set(query['boundaries'])
+        viewDimensionsSet = set(map(lambda x:x.lower(), allContextViewInfo[query['context']][aView].get("dimensions", [])))
+        queriesDimensionsSet = set(map(lambda x:x.lower(), query['dimensions']))
+        viewBoundariesSet = set(map(lambda x:x.lower(), allContextViewInfo[query['context']][aView].get("boundaries", [])))
+        queriesBoundariesSet = set(map(lambda x:x.lower(), query['boundaries']))
         viewType = allContextViewInfo[query['context']][aView].get("type")
         if (viewDimensionsSet|viewBoundariesSet).issuperset(queriesDimensionsSet) and viewBoundariesSet.issuperset(queriesBoundariesSet):
             if viewType == 'explicit_boundary':
