@@ -4,17 +4,12 @@ import subprocess
 import argparse
 import deepy.cfg
 import deepy.deepui
-import deepy.dimensions.util
+import get_context
 
 import pandas as pd
 import deepy.log as log
 
 from subprocess import check_output as run
-
-import requests
-from requests.packages.urllib3.exceptions import InsecureRequestWarning
-requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
-import json
 
 def parse_args():
     p = argparse.ArgumentParser(
@@ -25,18 +20,25 @@ def parse_args():
         formatter_class=argparse.RawTextHelpFormatter,
     )
     p.add_argument(
-        "--force",
+        "--rescrape-logs",
         dest="force",
         default=False,
         action="store_true",
         help="Rescrape the logs for queries.",
     )
     p.add_argument(
+        "--no-cache",
+        dest="nocache",
+        default=False,
+        action="store_true",
+        help="Reevaluate all definitions for contexts, views, and dimensions.",
+    )
+    p.add_argument(
         "--support-user",
         dest="support",
         default=False,
         action="store_true",
-        help="Do you want to include queries using the suppot user apikey?",
+        help="Do you want to include queries using the support user apikey?",
     )
     p.add_argument(
           "--top",
@@ -79,11 +81,6 @@ uiLogName = 'ui.log'
 queriesFile = './queries_from_logs.txt'
 # result-file with query-counts
 querySummaryfile = 'querysummary.csv'
-# Get the pipedream version
-pipedreamVersion = str(deepy.cfg.slice_config.get("build_updates", {}).get("revision"))
-# Grab the dimension database
-ddb = deepy.dimensions.ddb.get_local_ddb()
-
 
 # Define Regex paterns to extract query-fields
 # type (cube or count) query
@@ -102,8 +99,6 @@ apikey_regex = re.compile(r"api_key=([\w,.-]*)&?")
 boundaryslice_regex = re.compile(r"bs=\(([\w,-.()]*)\)&?") 
 # pattern to extract each boundary from the boundary slice
 boundary_regex = re.compile(r"\((boundary\.[\w.-]*),.*\)")
-# pattern to extract the boundary fields from a boundary dimension 
-boundarydim_regex = re.compile(r"boundary\.([\w.-]*)\.(\w*)")
 
 def getListOfLogFiles():
     filesToConsume = []
@@ -189,120 +184,7 @@ def getQueryInfoFromLogs():
     return queriesDataFrame
 
 
-def getViewDimensionsAndBoundaries(view, context):
-    named_dimensions = []
-    named_boundaries = []
-    view_type = 'simple'
-    dimensions = view.get("dimensions")
-    if dimensions is None:
-        dimensions = context.get("dimensions")
-    if dimensions is None:
-        dimensions = []
-    for dim in dimensions:
-        named_dim = deepy.dimensions.util.dim_id_to_name(ddb, dim)
-        mo = boundarydim_regex.search(named_dim)
-        if mo:
-            view_type = 'explicit_boundary'
-            named_boundary = 'boundary.' + boundaryMap[int(mo.group(1))] + '.' + mo.group(2)
-            named_boundaries.append(named_boundary)
-        elif named_dim == 'all_boundary_columns_macro':
-            for boundary in boundaryMap.values():
-                split_boundary = [ 'boundary.' + boundary + '.input', 'boundary.' + boundary + '.output' ] 
-                named_boundaries = named_boundaries + split_boundary
-        else:
-            named_dimensions.append(deepy.dimensions.util.dim_id_to_name(ddb, dim))
-
-    view_properties = dict()
-    view_properties['dimensions'] = sorted(named_dimensions)
-    view_properties['boundaries'] = sorted(named_boundaries)
-    view_properties['type'] = view_type
-    
-    return view_properties
-
-
-def getSqlViews(context_id):
-    from deepy.context import sql_context_util
-    listOfViews = {}
-    context_json = sql_context_util.get_merged_contexts(context=context_id)
-    for view in context_json[context_id].get("views", []):
-        listOfViews[view.get("uuid", view.get("name"))] = {
-            "dimensions": getViewDimensionsAndBoundaries(view, context_json)['dimensions'],
-            "boundaries": getViewDimensionsAndBoundaries(view, context_json)['boundaries'],
-            "type": getViewDimensionsAndBoundaries(view, context_json)['type'],
-            "timesteps": view.get("timesteps"),
-            "retention": view.get("retention"),
-            "name": view.get("name")
-        }
-    return listOfViews
-
-
-def getOldViews(context_id):
-    listOfViews = {}
-    local_path = deepy.cfg.context_dir + "/%s.json" % context_id
-    context_json = deepy.cfg.connector_store.simple_load_json(local_path)
-    if not context_json:
-        return
-
-    for view in context_json[context_id].get("views", []):
-        listOfViews[view.get("uuid")] = {
-            "dimensions": getViewDimensionsAndBoundaries(view, context_json)['dimensions'],
-            "boundaries": getViewDimensionsAndBoundaries(view, context_json)['boundaries'],
-            "type": getViewDimensionsAndBoundaries(view, context_json)['boundaries'],
-            "timesteps": view.get("timesteps"),
-            "retention": view.get("retention")
-        }
-    return listOfViews
-
-def getBoundaryMap():
-    apiKey = deepy.deepui.get_root_api_keys()[0]
-    total_size = None
-    url = 'https://localhost/api/boundaries?api_key=' + apiKey
-    response = requests.get(url, verify=False)
-    boundaryMap = dict()
-    for boundary in response.json():
-        boundaryMap[boundary['id']] = boundary['name'].lower()
-    return boundaryMap
-
-def storeAllContextViewInfo(contextsToEvaluate=['traffic', 'backbone', 'big_cube']):
-    allTheThings = {}
-    if pipedreamVersion.startswith("5"):
-        lookForViewsInMysql = True
-    else:
-        lookForViewsInMysql = False
-
-    for context in contextsToEvaluate:
-        if lookForViewsInMysql:
-            allTheThings[context] = getSqlViews(context)
-        else:
-            allTheThings[context] = getOldViews(context)
-    return allTheThings
-
-
-def view_uuid(row):
-    viewCandidate = {"name": "No Match", "uuid": "-99", "precision": 99000}
-
-    for aView in allContextViewInfo[row['context']]:
-        viewDimensionsSet = set(map(lambda x:x.lower(), allContextViewInfo[row['context']][aView].get("dimensions", [])))
-        queriesDimensionsSet = set(map(lambda x:x.lower(), row['dimensions']))
-        viewBoundariesSet = set(map(lambda x:x.lower(), allContextViewInfo[row['context']][aView].get("boundaries", [])))
-        queriesBoundariesSet = set(map(lambda x:x.lower(), row['boundaries']))
-        viewType = allContextViewInfo[row['context']][aView].get("type")
-        if (viewDimensionsSet|viewBoundariesSet).issuperset(queriesDimensionsSet) and viewBoundariesSet.issuperset(queriesBoundariesSet):
-            if viewType == 'explicit_boundary':
-                if len(queriesBoundariesSet) == 0: continue
-            dimensionsDifference = len(viewDimensionsSet.difference(queriesDimensionsSet))
-            boundariesDifference = len(viewBoundariesSet.difference(queriesBoundariesSet))
-            difference = 1000 * dimensionsDifference + boundariesDifference
-            if difference < viewCandidate['precision']:
-                viewCandidate['uuid'] = aView
-                viewCandidate['name'] = allContextViewInfo[row['context']][aView].get("name", "None")
-                viewCandidate['precision'] = difference
-    row['uuid'] = viewCandidate['uuid']
-    row['name'] = viewCandidate['name']
-    return row
-
-
-def analyizeQueries(queriesDF, args):
+def analyzeQueries(queriesDF, args):
     supportKeys = deepy.deepui.get_root_api_keys()
     contextsToEvaluate = args.contexts
     if args.support:
@@ -320,7 +202,7 @@ def analyizeQueries(queriesDF, args):
             .size().to_frame('count').reset_index()
 
     log.info("Mapping view UUID to queries.")
-    taggedQueries = countedQueries.apply(view_uuid, axis=1)
+    taggedQueries = countedQueries.apply(allContextInfo.view_uuid, axis=1)
     taggedQueries.to_csv(querySummaryfile, index=False)
 
     for aContext in contextsToEvaluate:
@@ -332,26 +214,27 @@ def analyizeQueries(queriesDF, args):
         else:
             print(df[["context", "dimensions", "boundaries", "uuid", "name", "count"]].sort_values(['count'], ascending=False).head(queryThreshold))
 
-
 def main():
     args = parse_args()
+
+    scrapeLogs(getListOfLogFiles(), args.force)
 
     # Storing as global because it's hard to pass a value into a dataframe apply.
     global queryThreshold
     queryThreshold = args.top
 
+    reEvaluate = True if args.nocache else False
+
     # Storing all information about views in the global namespace.
+    global allContextInfo
+    global boundaryMap
     global allContextViewInfo
 
-    scrapeLogs(getListOfLogFiles(), args.force)
+    allContextInfo = get_context.Context(contextList=args.contexts, reEvaluate=args.nocache, callingProgram='user_query_summary')
+    boundaryMap = allContextInfo.boundaryMap
+    allContextViewInfo = allContextInfo.allContextViewInfo
 
-    global boundaryMap 
-    boundaryMap = getBoundaryMap()
-
-    allContextViewInfo = storeAllContextViewInfo(args.contexts)
-    scrapeLogs(getListOfLogFiles(), args.force)
-
-    analyizeQueries(getQueryInfoFromLogs(), args)
+    analyzeQueries(getQueryInfoFromLogs(), args)
 
 
 if __name__ == "__main__":

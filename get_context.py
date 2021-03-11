@@ -2,12 +2,13 @@ import re
 import deepy.cfg
 import deepy.deepui
 import deepy.dimensions.util
+import deepy.log as log
 
+import os
 import requests
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 import json
-import os
 
 # Define Regex paterns to extract query-fields
 # pattern to extract the boundary fields from a boundary dimension 
@@ -16,25 +17,36 @@ boundarydim_regex = re.compile(r"boundary\.([\w.-]*)\.(\w*)")
 
 class Context():
 
-    contextsToEvaluate = ['traffic','backbone','big_cube']
-
-    def __init__(self, contextList = None, reEvaluate = True):
-        if contextList is not None:
-            self.contextsToEvaluate = list(set(contextList) | set(self.contextsToEvaluate))
+    def __init__(self, contextList, reEvaluate = False, callingProgram = 'user_query_summary'):
+        if not os.path.exists('context.json') or (not os.path.exists('dashboards.json') and callingProgram=='get_dashboards'):
+            reEvaluate = True
+        self.contextsToEvaluate = contextList
         self.boundaryMap = self.getBoundaryMap()
-        if not reEvaluate and os.path.exists('context.json'):
+        if not reEvaluate:
             with open('context.json') as f:
                 self.allContextViewInfo = json.load(f)
-            with open('dashboards.json') as f:
-                self.dashboardInfo = json.load(f)
-        else:
+                for context in contextList:
+                     if context not in self.allContextViewInfo.keys():
+                         reEvaluate = True
+                         return
+            log.info("Loaded context, view, and dimension info from local file 'context.json', use --no-cache if you want fresher info.")
+            if callingProgram == 'get_dashboards':
+                log.info("Loading dashboard definitions from local file 'dashboards.json', use --no-cache if you want fresher info.")
+                with open('dashboards.json') as f:
+                    self.dashboardInfo = json.load(f)
+        if reEvaluate:
+            log.info("Loading context, view, and dimension info from Deepfield API, please wait...")
             self.ddb = deepy.dimensions.ddb.get_local_ddb()
             self.allContextViewInfo = self.storeAllContextViewInfo(self.contextsToEvaluate)
+            log.info("Storing context, view, and dimension info into local file 'context.json' for future caching")
             with open('context.json', 'w') as f:
-                json.dump(allContextViewInfo, f)
-            self.dashboardInfo = self.getDashboardInfo()
-            with open('dashboards.json', 'w') as f:
-                json.dump(self.dashboardInfo, f)
+                json.dump(self.allContextViewInfo, f)
+            if callingProgram == 'get_dashboards':
+                log.info("Loading dashboard definitions from Deepfield API")
+                self.dashboardInfo = self.getDashboardInfo()
+                log.info("Storing dashboard definitions into local file 'dashboards.json' for future caching")
+                with open('dashboards.json', 'w') as f:
+                    json.dump(self.dashboardInfo, f)
 
     def storeAllContextViewInfo(self, contextsToEvaluate):
         allTheThings = {}
@@ -140,3 +152,27 @@ class Context():
             dashboard_info = response.json()
             all_dashboards.append(dashboard_info)
         return all_dashboards
+
+    def view_uuid(self, row):
+        viewCandidate = {"name": "No_Match", "uuid": "-99", "precision": 99000, "dimensions_and_boundaries": ''}
+        for aView in self.allContextViewInfo[row['context']]:
+            viewDimensionsSet = set(map(lambda x:x.lower(), self.allContextViewInfo[row['context']][aView].get("dimensions", [])))
+            queriesDimensionsSet = set(map(lambda x:x.lower(), row['dimensions']))
+            viewBoundariesSet = set(map(lambda x:x.lower(), self.allContextViewInfo[row['context']][aView].get("boundaries", [])))
+            queriesBoundariesSet = set(map(lambda x:x.lower(), row['boundaries']))
+            viewType = self.allContextViewInfo[row['context']][aView].get("type")
+            if (viewDimensionsSet|viewBoundariesSet).issuperset(queriesDimensionsSet) and viewBoundariesSet.issuperset(queriesBoundariesSet):
+                if viewType == 'explicit_boundary':
+                    if len(queriesBoundariesSet) == 0: continue
+                dimensionsDifference = len(viewDimensionsSet.difference(queriesDimensionsSet))
+                boundariesDifference = len(viewBoundariesSet.difference(queriesBoundariesSet))
+                difference = 1000 * dimensionsDifference + boundariesDifference
+                if difference < viewCandidate['precision']:
+                    viewCandidate['uuid'] = aView
+                    viewCandidate['name'] = self.allContextViewInfo[row['context']][aView].get("name", "None")
+                    viewCandidate['precision'] = difference
+                    viewCandidate['dimensions_and_boundaries'] = sorted(tuple(viewDimensionsSet | viewBoundariesSet))
+        row['uuid'] = viewCandidate['uuid']
+        row['name'] = viewCandidate['name'] 
+        row['matching_view_dimensions'] = viewCandidate['dimensions_and_boundaries']
+        return row

@@ -1,52 +1,40 @@
 import re
-import os
-import subprocess
 import argparse
-import deepy.cfg
-import deepy.deepui
-import deepy.dimensions.util
 
-import pandas as pd
 import deepy.log as log
-
-from subprocess import check_output as run
-
-import requests
-from requests.packages.urllib3.exceptions import InsecureRequestWarning
-requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
-import json
+import get_context
 
 # Define Regex paterns to extract query-fields
 # pattern to extract the boundary fields from a boundary dimension 
 boundarydim_regex = re.compile(r"boundary\.([\w.-]*)\.(\w*)")
 
-def view_uuid(query, dashboards):
-    viewCandidate = {"name": "No Match", "uuid": "-99", "precision": 99000, "dimensions_and_boundaries": ''}
-    for aView in allContextViewInfo[query['context']]:
-        viewDimensionsSet = set(map(lambda x:x.lower(), allContextViewInfo[query['context']][aView].get("dimensions", [])))
-        queriesDimensionsSet = set(map(lambda x:x.lower(), query['dimensions']))
-        viewBoundariesSet = set(map(lambda x:x.lower(), allContextViewInfo[query['context']][aView].get("boundaries", [])))
-        queriesBoundariesSet = set(map(lambda x:x.lower(), query['boundaries']))
-        viewType = allContextViewInfo[query['context']][aView].get("type")
-        if (viewDimensionsSet|viewBoundariesSet).issuperset(queriesDimensionsSet) and viewBoundariesSet.issuperset(queriesBoundariesSet):
-            if viewType == 'explicit_boundary':
-                if len(queriesBoundariesSet) == 0: continue
-            dimensionsDifference = len(viewDimensionsSet.difference(queriesDimensionsSet))
-            boundariesDifference = len(viewBoundariesSet.difference(queriesBoundariesSet))
-            difference = 1000 * dimensionsDifference + boundariesDifference
-            if difference < viewCandidate['precision']:
-                viewCandidate['uuid'] = aView
-                viewCandidate['name'] = allContextViewInfo[query['context']][aView].get("name", "None")
-                viewCandidate['precision'] = difference
-                viewCandidate['dimensions_and_boundaries'] = sorted(tuple(viewDimensionsSet | viewBoundariesSet))
-    #if viewCandidate['uuid'] == '-99': import pdb; pdb.set_trace()
-    query['dimensions_and_boundaries'] = sorted(tuple(queriesDimensionsSet | queriesBoundariesSet))
-    query['view_uuid'] = viewCandidate['uuid']
-    query['view_name'] = viewCandidate['name']
-    print(str(dashboards) + ';' + query['context'] + ';' + str(query['dimensions_and_boundaries']) + ';' + str(viewCandidate['dimensions_and_boundaries']) + ';' + query['view_name'] + ';' + query['view_uuid'])
-
+def parse_args():
+    p = argparse.ArgumentParser(
+        description="""
+        A utility to inspect view coverage for all dashboards.
+        """,
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    p.add_argument(
+        "--no-cache",
+        dest="nocache",
+        default=False,
+        action="store_true",
+        help="Reevaluate all definitions for contexts, views, and dimensions.",
+    )
+    p.add_argument(
+        "--extra-context",
+        dest="contexts",
+        action="append",
+        choices=['subscriber', 'video_stream', 'flowdump'],
+        default=['traffic', 'backbone', 'big_cube'],
+        help="Extra contexts to include?",
+    )
+    args = p.parse_args()
+    return args
 
 def getDashboardQueries():
+    log.info('Matching dashboard queries to existing views')
     all_queries_hashes = list()
     all_queries_info = list()
     all_queries_dashboards = list() 
@@ -91,15 +79,21 @@ def getDashboardQueries():
 
 def main():
 
-    global allContextViewInfo
-    with open('context.json') as f:
-        allContextViewInfo = json.load(f)
+    args = parse_args()
 
-    global dashboardInfo
-    with open('dashboards.json') as f:
-        dashboardInfo = json.load(f) 
-    
+    # Storing all information about views in the global namespace.
+    global allContextInfo
+    global boundaryMap
+    global allContextViewInfo
+
+    allContextInfo = get_context.Context(contextList=args.contexts, reEvaluate=args.nocache, callingProgram='get_dashboards')
+    boundaryMap = allContextInfo.boundaryMap
+    allContextViewInfo = allContextInfo.allContextViewInfo
+
+    global dashboardInfo 
     global dashboardQueries
+
+    dashboardInfo = allContextInfo.dashboardInfo
     dashboardQueries = getDashboardQueries()
 
     print('dashboard_list;context;query_dimensions_and_boundaries;best_matching_view_dimensions_and_boundaries;best_matching_view_name;best_matching_view_uuid')
@@ -108,8 +102,9 @@ def main():
         query = dashboardQueries['info'][i] 
         dashboards = dashboardQueries['dashboards'][i]
         if query['context'] in ['traffic','backbone','big_cube']:
-            view_uuid(query, dashboards)
-
+            query = allContextInfo.view_uuid(query)
+            print(str(dashboards) + ';' + query['context'] + ';' + str(sorted(tuple(set(query['dimensions'])|set(query['boundaries'])))) + ';' + str(query['matching_view_dimensions'])
+                  + ';' + query['name'] + ';' + query['uuid'])
 
 if __name__ == "__main__":
     main()
