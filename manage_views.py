@@ -44,7 +44,7 @@ if dimension is None and action in [ "add-dimension", "remove-dimension" ]:
 timesteps = args.timesteps
 if timesteps is None and action in [ "change-timesteps" ]:
     print(action)
-    print ("--timesteps <timestep_dictionary> is required when action is --change-timesteps, for example --timesteps \"{'5min':32,'30min':93,'2hour':190}\"")
+    print ("--timesteps <timestep_dictionary> is required when action is --change-timesteps, for example --timesteps '{\"5min\":32,\"30min\":93,\"2hour\":190}'")
     sys.exit(1)
 
 base_url = 'https://localhost/api/data_views/'
