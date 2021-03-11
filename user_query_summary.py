@@ -203,7 +203,7 @@ def analyzeQueries(queriesDF, args):
 
     log.info("Mapping view UUID to queries.")
     taggedQueries = countedQueries.apply(allContextInfo.view_uuid, axis=1)
-    taggedQueries.to_csv(querySummaryfile, index=False)
+    taggedQueries.to_csv(querySummaryfile, sep=';', index=False)
 
     for aContext in contextsToEvaluate:
         print("*** Top queried dimensions for " + str(aContext) + ".")
