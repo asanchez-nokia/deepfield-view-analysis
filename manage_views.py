@@ -90,7 +90,7 @@ def put_view(view):
     if action != 'change-timesteps':
         retention = {}
         for step, value in view['timesteps'].items():
-            retention[step] = value['data_age_days']
+            retention[step] = value['retention_days']
         view['timestep_retention_days'] = retention
         del view['timesteps']
 
