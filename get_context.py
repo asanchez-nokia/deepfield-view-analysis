@@ -11,7 +11,7 @@ requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 import json
 
 # Define Regex paterns to extract query-fields
-# pattern to extract the boundary fields from a boundary dimension 
+# pattern to extract the boundary fields from a boundary dimension
 boundarydim_regex = re.compile(r"boundary\.([\w.-]*)\.(\w*)")
 
 
@@ -50,86 +50,53 @@ class Context():
 
     def storeAllContextViewInfo(self, contextsToEvaluate):
         allTheThings = {}
-        # Get the pipedream version
-        pipedreamVersion = str(deepy.cfg.slice_config.get("build_updates", {}).get("revision"))
-        if pipedreamVersion.startswith("5"):
-            lookForViewsInMysql = True
-        else:
-            lookForViewsInMysql = False
-    
+
         for context in contextsToEvaluate:
-            if lookForViewsInMysql:
-                allTheThings[context] = self.getSqlViews(context)
-            else:
-                allTheThings[context] = self.getOldViews(context)
+            allTheThings[context] = self.getSqlViews(context)
         return allTheThings
-    
+
     def getViewDimensionsAndBoundaries(self, view, context):
         named_dimensions = []
         named_boundaries = []
-        view_type = 'simple'
         dimensions = view.get("dimensions")
         if dimensions is None:
-            dimensions = context.get("dimensions")
-        if dimensions is None:
-            dimensions = []
+            dimensions = context['traffic']['dimensions'] + ['all_boundary_columns_macro']
         for dim in dimensions:
             named_dim = deepy.dimensions.util.dim_id_to_name(self.ddb, dim)
             mo = boundarydim_regex.search(named_dim)
             if mo:
-                view_type = 'explicit_boundary'
                 named_boundary = 'boundary.' + self.boundaryMap[int(mo.group(1))] + '.' + mo.group(2)
                 named_boundaries.append(named_boundary)
             elif named_dim == 'all_boundary_columns_macro':
                 for boundary in self.boundaryMap.values():
-                    split_boundary = [ 'boundary.' + boundary + '.input', 'boundary.' + boundary + '.output' ] 
+                    split_boundary = [ 'boundary.' + boundary + '.input', 'boundary.' + boundary + '.output' ]
                     named_boundaries = named_boundaries + split_boundary
             else:
                 named_dimensions.append(deepy.dimensions.util.dim_id_to_name(self.ddb, dim))
-    
+
         view_properties = dict()
         view_properties['dimensions'] = sorted(named_dimensions)
         view_properties['boundaries'] = sorted(named_boundaries)
-        view_properties['type'] = view_type
-        
+
         return view_properties
-    
-    
+
+
     def getSqlViews(self, context_id):
         from deepy.context import sql_context_util
         listOfViews = {}
         context_json = sql_context_util.get_merged_contexts(context=context_id)
+        dimensions = context_json[context_id]['dimensions']
         for view in context_json[context_id].get("views", []):
             viewDimensionsAndBoundaries = self.getViewDimensionsAndBoundaries(view, context_json)
             listOfViews[view.get("uuid", view.get("name"))] = {
                 "dimensions": viewDimensionsAndBoundaries['dimensions'],
                 "boundaries": viewDimensionsAndBoundaries['boundaries'],
-                "type": viewDimensionsAndBoundaries['type'],
                 "timesteps": view.get("timesteps"),
                 "retention": view.get("retention"),
                 "name": view.get("name")
             }
-        return listOfViews
-    
-    
-    def getOldViews(self, context_id):
-        listOfViews = {}
-        local_path = deepy.cfg.context_dir + "/%s.json" % context_id
-        context_json = deepy.cfg.connector_store.simple_load_json(local_path)
-        if not context_json:
-            return
-    
-        for view in context_json[context_id].get("views", []):
-            viewDimensionsAndBoundaries = self.getViewDimensionsAndBoundaries(view, context_json)
-            listOfViews[view.get("uuid")] = {
-                "dimensions": viewDimensionsAndBoundaries['dimensions'],
-                "boundaries": viewDimensionsAndBoundaries['boundaries'],
-                "type": viewDimensionsAndBoundaries['boundaries'],
-                "timesteps": view.get("timesteps"),
-                "retention": view.get("retention")
-            }
-        return listOfViews
-    
+        return {"views": listOfViews, "dimensions": dimensions}
+
     def getBoundaryMap(self):
         apiKey = deepy.deepui.get_root_api_keys()[0]
         total_size = None
@@ -154,25 +121,43 @@ class Context():
         return all_dashboards
 
     def view_uuid(self, row):
-        viewCandidate = {"name": "No_Match", "uuid": "-99", "precision": 99000, "dimensions_and_boundaries": ''}
-        for aView in self.allContextViewInfo[row['context']]:
-            viewDimensionsSet = set(map(lambda x:x.lower(), self.allContextViewInfo[row['context']][aView].get("dimensions", [])))
-            queriesDimensionsSet = set(map(lambda x:x.lower(), row['dimensions']))
-            viewBoundariesSet = set(map(lambda x:x.lower(), self.allContextViewInfo[row['context']][aView].get("boundaries", [])))
-            queriesBoundariesSet = set(map(lambda x:x.lower(), row['boundaries']))
-            viewType = self.allContextViewInfo[row['context']][aView].get("type")
+        dimensions = row['dimensions'].to_string().strip(' ()').rstrip(',').replace(' ','')
+        dimensions = [] if dimensions == '' else dimensions.split(',')
+        boundaries = row['boundaries'].to_string().strip(' ()').rstrip(',').replace(' ','')
+        boundaries = [] if boundaries == '' else boundaries.split(',')
+        context = row['context'].to_string().strip(' ')
+        for dimension in dimensions:
+            if dimension not in self.allContextViewInfo[context]['dimensions']:
+                row['name'] = 'Invalid Dimensions List'
+                row['uuid'] = ''
+                return row
+        viewCandidate = {"name": "No_Match", "uuid": "", "precision": 999000, "dimensions_and_boundaries": ''}
+        explicitTimestep = row["explicitTimestep"].to_string().strip(' ')
+        if explicitTimestep != '':
+            timestep = explicitTimestep
+        else:
+            timestep = row["autoTimestep"].to_string().strip(' ')
+        if timestep == '10s':
+            row["name"] = 'traffic_step10'
+            row["uuid"] = ''
+            return row
+        for aView in self.allContextViewInfo[context]['views']:
+            if timestep not in self.allContextViewInfo[context]['views'][aView].get("timesteps", []):
+                continue
+            viewDimensionsSet = set(map(lambda x:x.lower(), self.allContextViewInfo[context]['views'][aView].get("dimensions", [])))
+            queriesDimensionsSet = set(map(lambda x:x.lower(), dimensions))
+            viewBoundariesSet = set(map(lambda x:x.lower(), self.allContextViewInfo[context]['views'][aView].get("boundaries", [])))
+            queriesBoundariesSet = set(map(lambda x:x.lower(), boundaries))
             if (viewDimensionsSet|viewBoundariesSet).issuperset(queriesDimensionsSet) and viewBoundariesSet.issuperset(queriesBoundariesSet):
-                if viewType == 'explicit_boundary':
-                    if len(queriesBoundariesSet) == 0: continue
                 dimensionsDifference = len(viewDimensionsSet.difference(queriesDimensionsSet))
                 boundariesDifference = len(viewBoundariesSet.difference(queriesBoundariesSet))
                 difference = 1000 * dimensionsDifference + boundariesDifference
                 if difference < viewCandidate['precision']:
                     viewCandidate['uuid'] = aView
-                    viewCandidate['name'] = self.allContextViewInfo[row['context']][aView].get("name", "None")
+                    viewCandidate['name'] = self.allContextViewInfo[context]['views'][aView].get("name", "None")
                     viewCandidate['precision'] = difference
                     viewCandidate['dimensions_and_boundaries'] = sorted(tuple(viewDimensionsSet | viewBoundariesSet))
         row['uuid'] = viewCandidate['uuid']
-        row['name'] = viewCandidate['name'] 
+        row['name'] = viewCandidate['name']
         row['matching_view_dimensions'] = viewCandidate['dimensions_and_boundaries']
         return row
